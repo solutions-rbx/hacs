@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hermes Assist",
+        "description": "Connect Home Assistant Assist to Hermes Agent.",
+        "data": {
+          "base_url": "Hermes base URL",
+          "voice_base_url": "Hermes Assist plugin voice API base URL",
+          "api_token": "API token",
+          "enable_conversation": "Enable conversation agent",
+          "enable_stt": "Enable Hermes speech-to-text",
+          "enable_tts": "Enable Hermes text-to-speech"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to Hermes Agent.",
+      "invalid_auth": "Hermes Agent rejected the configured token.",
+      "unknown": "Unexpected Hermes Agent error."
+    },
+    "abort": {
+      "already_configured": "This Hermes Agent is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Hermes Assist options",
+        "data": {
+          "health_path": "Health endpoint path",
+          "capabilities_path": "Capabilities endpoint path",
+          "model": "Hermes API model",
+          "conversation_api": "Conversation API",
+          "conversation_path": "Responses API endpoint path",
+          "chat_completions_path": "Chat completions endpoint path",
+          "voice_base_url": "Hermes Assist plugin voice API base URL",
+          "stt_path": "Speech-to-text endpoint path",
+          "tts_path": "Text-to-speech endpoint path",
+          "timeout_seconds": "Request timeout in seconds",
+          "default_language": "Default language",
+          "tts_audio_format": "Fallback TTS audio format"
+        }
+      }
+    }
+  }
+}

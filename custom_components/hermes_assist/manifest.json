@@ -1,0 +1,12 @@
+{
+  "domain": "hermes_assist",
+  "name": "Hermes Assist",
+  "after_dependencies": ["assist_pipeline", "conversation", "stt", "tts"],
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/thijn/hermes-assist",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.1.0"
+}
