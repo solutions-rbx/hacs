@@ -163,3 +163,38 @@ After setup, open Home Assistant Assist pipeline settings and choose:
 - **Hermes Assist TTS** as the text-to-speech provider, if enabled
 
 You can mix Hermes with other providers.
+
+## Custom STT/TTS From Home Assistant
+
+If the Hermes plugin voice bridge is not working yet, open the Hermes Assist integration options in Home Assistant and change:
+
+```text
+STT provider mode: custom_http
+TTS provider mode: custom_http
+```
+
+Custom STT sends an OpenAI-style multipart request:
+
+```text
+POST <Custom STT base URL><Speech-to-text endpoint path>
+Authorization: Bearer <Custom STT API token>
+fields:
+  model
+  language
+  file
+```
+
+The response text is read from `stt_response_text_field`, default `text`.
+
+Custom TTS sends an OpenAI-style JSON request:
+
+```json
+{
+  "model": "gpt-4o-mini-tts",
+  "input": "Hello",
+  "voice": "alloy",
+  "response_format": "mp3"
+}
+```
+
+The TTS response must be raw audio bytes with a useful `Content-Type`, such as `audio/mpeg` or `audio/wav`.

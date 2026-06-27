@@ -8,6 +8,7 @@ import logging
 from typing import Any
 from urllib.parse import urljoin
 
+import aiohttp
 from aiohttp import ClientError, ClientResponse, ClientSession
 
 from .const import (
@@ -20,10 +21,20 @@ from .const import (
     CONF_DEFAULT_LANGUAGE,
     CONF_HEALTH_PATH,
     CONF_MODEL,
+    CONF_STT_API_TOKEN,
+    CONF_STT_BASE_URL,
+    CONF_STT_MODEL,
     CONF_STT_PATH,
+    CONF_STT_PROVIDER,
+    CONF_STT_RESPONSE_TEXT_FIELD,
     CONF_TIMEOUT,
+    CONF_TTS_API_TOKEN,
     CONF_TTS_AUDIO_FORMAT,
+    CONF_TTS_BASE_URL,
+    CONF_TTS_MODEL,
     CONF_TTS_PATH,
+    CONF_TTS_PROVIDER,
+    CONF_TTS_VOICE,
     CONF_VOICE_BASE_URL,
     DEFAULT_CAPABILITIES_PATH,
     DEFAULT_CHAT_COMPLETIONS_PATH,
@@ -32,10 +43,18 @@ from .const import (
     DEFAULT_HEALTH_PATH,
     DEFAULT_LANGUAGE,
     DEFAULT_MODEL,
+    DEFAULT_STT_BASE_URL,
+    DEFAULT_STT_MODEL,
     DEFAULT_STT_PATH,
+    DEFAULT_STT_PROVIDER,
+    DEFAULT_STT_RESPONSE_TEXT_FIELD,
     DEFAULT_TIMEOUT,
+    DEFAULT_TTS_BASE_URL,
     DEFAULT_TTS_AUDIO_FORMAT,
+    DEFAULT_TTS_MODEL,
     DEFAULT_TTS_PATH,
+    DEFAULT_TTS_PROVIDER,
+    DEFAULT_TTS_VOICE,
     DEFAULT_VOICE_BASE_URL,
 )
 
@@ -148,6 +167,16 @@ def _audio_extension(content_type: str | None, fallback: str) -> str:
     return fallback
 
 
+def _nested_value(payload: dict[str, Any], dotted_path: str) -> Any:
+    """Read a dotted path from a nested dict."""
+    current: Any = payload
+    for part in dotted_path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
 class HermesClient:
     """Minimal async client for Hermes Agent."""
 
@@ -158,6 +187,16 @@ class HermesClient:
         self._api_token = data.get(CONF_API_TOKEN)
         self._options = options
         self._voice_base_url = str(self._options.get(CONF_VOICE_BASE_URL, DEFAULT_VOICE_BASE_URL)).rstrip("/")
+
+    @property
+    def stt_provider(self) -> str:
+        """Return the selected STT provider mode."""
+        return str(self._options.get(CONF_STT_PROVIDER, DEFAULT_STT_PROVIDER))
+
+    @property
+    def tts_provider(self) -> str:
+        """Return the selected TTS provider mode."""
+        return str(self._options.get(CONF_TTS_PROVIDER, DEFAULT_TTS_PROVIDER))
 
     @property
     def model(self) -> str:
@@ -180,6 +219,11 @@ class HermesClient:
         return int(self._options.get(CONF_TIMEOUT, DEFAULT_TIMEOUT))
 
     @property
+    def conversation_timeout(self) -> int:
+        """Return a conversation timeout long enough for agent tool calls."""
+        return max(self.timeout, DEFAULT_TIMEOUT)
+
+    @property
     def tts_audio_format(self) -> str:
         """Return the fallback TTS extension."""
         return str(self._options.get(CONF_TTS_AUDIO_FORMAT, DEFAULT_TTS_AUDIO_FORMAT))
@@ -190,11 +234,31 @@ class HermesClient:
         base_url = self._voice_base_url if voice else self._base_url
         return urljoin(f"{base_url}/", path.lstrip("/"))
 
+    def _custom_url(self, base_key: str, default_base: str, path_key: str, default_path: str) -> str:
+        """Build a custom provider endpoint URL."""
+        base_url = str(self._options.get(base_key, default_base)).rstrip("/")
+        path = _clean_path(str(self._options.get(path_key, default_path)))
+        return urljoin(f"{base_url}/", path.lstrip("/"))
+
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         """Build request headers."""
         headers: dict[str, str] = {}
         if self._api_token:
             headers["Authorization"] = f"Bearer {self._api_token}"
+        if extra:
+            headers.update(extra)
+        return headers
+
+    def _provider_headers(
+        self,
+        token_key: str,
+        extra: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        """Build headers for custom provider calls."""
+        headers: dict[str, str] = {}
+        token = self._options.get(token_key) or self._api_token
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         if extra:
             headers.update(extra)
         return headers
@@ -277,7 +341,7 @@ class HermesClient:
                 url,
                 headers=self._headers({"Content-Type": "application/json"}),
                 json=payload,
-                timeout=self.timeout,
+                timeout=self.conversation_timeout,
             ) as response:
                 await self._raise_for_status(response)
                 data = await _read_json_or_text(response)
@@ -321,7 +385,7 @@ class HermesClient:
                 url,
                 headers=self._headers({"Content-Type": "application/json"}),
                 json=payload,
-                timeout=self.timeout,
+                timeout=self.conversation_timeout,
             ) as response:
                 await self._raise_for_status(response)
                 data = await _read_json_or_text(response)
@@ -342,6 +406,9 @@ class HermesClient:
 
     async def async_stt(self, audio: bytes, language: str, content_type: str = "audio/wav") -> str:
         """Send audio to Hermes STT and return recognized text."""
+        if self.stt_provider == "custom_http":
+            return await self._async_custom_stt(audio, language, content_type)
+
         url = self._url(CONF_STT_PATH, DEFAULT_STT_PATH, voice=True)
         headers = self._headers(
             {
@@ -369,8 +436,44 @@ class HermesClient:
             raise HermesResponseError("Hermes STT response did not include recognized text")
         return text
 
+    async def _async_custom_stt(self, audio: bytes, language: str, content_type: str) -> str:
+        """Send audio to a custom OpenAI-shaped STT endpoint."""
+        url = self._custom_url(CONF_STT_BASE_URL, DEFAULT_STT_BASE_URL, CONF_STT_PATH, DEFAULT_STT_PATH)
+        form = aiohttp.FormData()
+        form.add_field("model", str(self._options.get(CONF_STT_MODEL, DEFAULT_STT_MODEL)))
+        form.add_field("language", language)
+        form.add_field("file", audio, filename="audio.wav", content_type=content_type)
+
+        try:
+            async with self._session.post(
+                url,
+                headers=self._provider_headers(CONF_STT_API_TOKEN, {"Accept": "application/json"}),
+                data=form,
+                timeout=self.timeout,
+            ) as response:
+                await self._raise_for_status(response)
+                data = await _read_json_or_text(response)
+        except TimeoutError as err:
+            raise HermesConnectionError("Timed out waiting for custom STT response") from err
+        except ClientError as err:
+            raise HermesConnectionError("Could not send custom STT request") from err
+
+        if isinstance(data, dict):
+            field = str(self._options.get(CONF_STT_RESPONSE_TEXT_FIELD, DEFAULT_STT_RESPONSE_TEXT_FIELD))
+            value = _nested_value(data, field)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        text = _extract_text(data)
+        if not text:
+            raise HermesResponseError("Custom STT response did not include recognized text")
+        return text
+
     async def async_tts(self, message: str, language: str, options: dict[str, Any]) -> HermesTtsResponse:
         """Send text to Hermes TTS and return audio."""
+        if self.tts_provider == "custom_http":
+            return await self._async_custom_tts(message, language, options)
+
         url = self._url(CONF_TTS_PATH, DEFAULT_TTS_PATH, voice=True)
         payload = {"text": message, "language": language, "options": options}
         try:
@@ -390,6 +493,43 @@ class HermesClient:
 
         if not data:
             raise HermesResponseError("Hermes TTS response did not include audio")
+
+        return HermesTtsResponse(
+            extension=_audio_extension(content_type, self.tts_audio_format),
+            data=data,
+        )
+
+    async def _async_custom_tts(
+        self,
+        message: str,
+        language: str,
+        options: dict[str, Any],
+    ) -> HermesTtsResponse:
+        """Send text to a custom OpenAI-shaped TTS endpoint."""
+        url = self._custom_url(CONF_TTS_BASE_URL, DEFAULT_TTS_BASE_URL, CONF_TTS_PATH, DEFAULT_TTS_PATH)
+        payload = {
+            "model": str(options.get("model") or self._options.get(CONF_TTS_MODEL, DEFAULT_TTS_MODEL)),
+            "input": message,
+            "voice": str(options.get("voice") or self._options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)),
+            "response_format": self.tts_audio_format,
+        }
+        try:
+            async with self._session.post(
+                url,
+                headers=self._provider_headers(CONF_TTS_API_TOKEN, {"Content-Type": "application/json"}),
+                json=payload,
+                timeout=self.timeout,
+            ) as response:
+                await self._raise_for_status(response)
+                content_type = response.headers.get("Content-Type")
+                data = await response.read()
+        except TimeoutError as err:
+            raise HermesConnectionError("Timed out waiting for custom TTS response") from err
+        except ClientError as err:
+            raise HermesConnectionError("Could not send custom TTS request") from err
+
+        if not data:
+            raise HermesResponseError("Custom TTS response did not include audio")
 
         return HermesTtsResponse(
             extension=_audio_extension(content_type, self.tts_audio_format),

@@ -334,7 +334,12 @@ def run_hermes_tts(config: BridgeConfig, text: str, options: dict[str, Any]) -> 
         try:
             from tools.tts_tool import text_to_speech_tool
         except Exception as err:
-            raise CommandError("Hermes TTS tool is not importable in this process") from err
+            command = _configured_tts_command()
+            if not command:
+                raise CommandError(
+                    "Hermes TTS tool is not importable in this process and no command-type TTS provider was found"
+                ) from err
+            return run_tts_command_template(config, command, text, options, output_format)
 
         result_raw = text_to_speech_tool(text, output_path=str(output_path))
         try:
@@ -419,23 +424,36 @@ def run_stt_http(config: BridgeConfig, audio: bytes, language: str) -> str:
 
 def run_tts_command(config: BridgeConfig, text: str, language: str, options: dict[str, Any]) -> bytes:
     """Run a Hermes-style TTS command template."""
+    return run_tts_command_template(config, config.tts_command or "", text, options, config.tts_format, language)
+
+
+def run_tts_command_template(
+    config: BridgeConfig,
+    command_template: str,
+    text: str,
+    options: dict[str, Any],
+    output_format: str,
+    language: str | None = None,
+) -> bytes:
+    """Run a TTS command template."""
     with tempfile.TemporaryDirectory(prefix="hermes-assist-tts-") as tmp_dir:
         tmp_path = Path(tmp_dir)
         input_path = tmp_path / "input.txt"
-        output_path = tmp_path / f"speech.{config.tts_format}"
+        output_path = tmp_path / f"speech.{output_format}"
         input_path.write_text(text, encoding="utf-8")
 
         command = _render_command(
-            config.tts_command or "",
+            command_template,
             {
                 "input_path": input_path,
                 "text_path": input_path,
                 "output_path": output_path,
-                "format": config.tts_format,
+                "format": output_format,
                 "voice": str(options.get("voice") or config.tts_voice),
                 "model": str(options.get("model") or config.tts_model),
                 "speed": str(options.get("speed") or os.environ.get("HERMES_ASSIST_TTS_SPEED", "1.0")),
-                "language": language,
+                "language": language or config.default_language,
+                "text": text,
             },
         )
         completed = _run_command(command, config.tts_timeout)
@@ -720,6 +738,14 @@ def _configured_tts_output_format(config: BridgeConfig) -> str:
     provider = _configured_tts_provider()
     provider_config = _get_named_tts_config(tts_config, provider)
     return str(provider_config.get("output_format") or provider_config.get("format") or config.tts_format)
+
+
+def _configured_tts_command() -> str:
+    tts_config = _load_hermes_section("tts")
+    provider = _configured_tts_provider()
+    provider_config = _get_named_tts_config(tts_config, provider)
+    command = provider_config.get("command") or provider_config.get("cmd")
+    return str(command or "")
 
 
 def _get_named_tts_config(tts_config: dict[str, Any], provider: str) -> dict[str, Any]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 import logging
+import struct
 
 from homeassistant.components.tts import TextToSpeechEntity, TtsAudioType
 from homeassistant.config_entries import ConfigEntry
@@ -73,7 +74,28 @@ class HermesTtsEntity(TextToSpeechEntity):
             response = await self._client.async_tts(message, language, options)
         except HermesError:
             _LOGGER.exception("Hermes TTS failed")
-            return None
+            return "wav", _silent_wav()
 
         return response.extension, response.data
 
+
+def _silent_wav() -> bytes:
+    """Return a tiny valid silent WAV so HA does not fail unpacking TTS errors."""
+    sample_rate = 16000
+    channels = 1
+    bits_per_sample = 16
+    duration_samples = sample_rate // 4
+    data = b"\x00\x00" * duration_samples
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+    return b"".join(
+        [
+            b"RIFF",
+            struct.pack("<I", 36 + len(data)),
+            b"WAVEfmt ",
+            struct.pack("<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample),
+            b"data",
+            struct.pack("<I", len(data)),
+            data,
+        ]
+    )

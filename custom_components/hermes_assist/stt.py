@@ -64,12 +64,12 @@ class HermesSttEntity(SpeechToTextEntity):
     @property
     def supported_bit_rates(self) -> list[AudioBitRates]:
         """Return supported bit rates."""
-        return [AudioBitRates.BIT_RATE_16]
+        return [AudioBitRates.BITRATE_16]
 
     @property
     def supported_sample_rates(self) -> list[AudioSampleRates]:
         """Return supported sample rates."""
-        return [AudioSampleRates.SAMPLE_RATE_16000]
+        return [AudioSampleRates.SAMPLERATE_16000]
 
     @property
     def supported_channels(self) -> list[AudioChannels]:
@@ -95,4 +95,3 @@ class HermesSttEntity(SpeechToTextEntity):
             return SpeechResult(None, SpeechResultState.ERROR)
 
         return SpeechResult(text, SpeechResultState.SUCCESS)
-
