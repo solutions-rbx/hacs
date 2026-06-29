@@ -1,7 +1,7 @@
 {
   "domain": "hermes_assist",
   "name": "Hermes Assist",
-  "after_dependencies": ["assist_pipeline", "conversation", "stt", "tts"],
+  "after_dependencies": ["assist_pipeline", "conversation"],
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://github.com/thijn/hermes-assist",

@@ -8,7 +8,6 @@ import logging
 from typing import Any
 from urllib.parse import urljoin
 
-import aiohttp
 from aiohttp import ClientError, ClientResponse, ClientSession
 
 from .const import (
@@ -21,20 +20,7 @@ from .const import (
     CONF_DEFAULT_LANGUAGE,
     CONF_HEALTH_PATH,
     CONF_MODEL,
-    CONF_STT_API_TOKEN,
-    CONF_STT_BASE_URL,
-    CONF_STT_MODEL,
-    CONF_STT_PATH,
-    CONF_STT_PROVIDER,
-    CONF_STT_RESPONSE_TEXT_FIELD,
     CONF_TIMEOUT,
-    CONF_TTS_API_TOKEN,
-    CONF_TTS_AUDIO_FORMAT,
-    CONF_TTS_BASE_URL,
-    CONF_TTS_MODEL,
-    CONF_TTS_PATH,
-    CONF_TTS_PROVIDER,
-    CONF_TTS_VOICE,
     DEFAULT_CAPABILITIES_PATH,
     DEFAULT_CHAT_COMPLETIONS_PATH,
     DEFAULT_CONVERSATION_API,
@@ -42,18 +28,7 @@ from .const import (
     DEFAULT_HEALTH_PATH,
     DEFAULT_LANGUAGE,
     DEFAULT_MODEL,
-    DEFAULT_STT_BASE_URL,
-    DEFAULT_STT_MODEL,
-    DEFAULT_STT_PATH,
-    DEFAULT_STT_PROVIDER,
-    DEFAULT_STT_RESPONSE_TEXT_FIELD,
     DEFAULT_TIMEOUT,
-    DEFAULT_TTS_BASE_URL,
-    DEFAULT_TTS_AUDIO_FORMAT,
-    DEFAULT_TTS_MODEL,
-    DEFAULT_TTS_PATH,
-    DEFAULT_TTS_PROVIDER,
-    DEFAULT_TTS_VOICE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,22 +57,6 @@ class HermesConversationResponse:
     text: str
     conversation_id: str | None = None
     continue_conversation: bool = False
-
-
-@dataclass(slots=True)
-class HermesTtsResponse:
-    """Parsed Hermes TTS response."""
-
-    extension: str
-    data: bytes
-
-
-@dataclass(slots=True)
-class HermesVoiceSetupResponse:
-    """Parsed Hermes voice setup response."""
-
-    payload: dict[str, Any]
-    raw_text: str
 
 
 def _clean_path(path: str) -> str:
@@ -160,57 +119,6 @@ def _extract_text(payload: Any) -> str | None:
     return None
 
 
-def _audio_extension(content_type: str | None, fallback: str) -> str:
-    """Infer an audio extension from a content type."""
-    if content_type:
-        lower = content_type.lower()
-        if "wav" in lower or "wave" in lower:
-            return "wav"
-        if "mpeg" in lower or "mp3" in lower:
-            return "mp3"
-        if "ogg" in lower:
-            return "ogg"
-    return fallback
-
-
-def _nested_value(payload: dict[str, Any], dotted_path: str) -> Any:
-    """Read a dotted path from a nested dict."""
-    current: Any = payload
-    for part in dotted_path.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
-    return current
-
-
-def _extract_json_object(payload: Any) -> HermesVoiceSetupResponse:
-    """Extract a strict JSON object from a Hermes response."""
-    if isinstance(payload, dict) and isinstance(payload.get("status"), str):
-        return HermesVoiceSetupResponse(payload=payload, raw_text=json.dumps(payload))
-
-    text = _extract_text(payload)
-    if not text:
-        raise HermesResponseError("Hermes setup response did not include JSON text")
-
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError as err:
-        raise HermesResponseError(f"Hermes setup response was not valid JSON: {stripped[:300]}") from err
-
-    if not isinstance(parsed, dict):
-        raise HermesResponseError("Hermes setup response JSON was not an object")
-    return HermesVoiceSetupResponse(payload=parsed, raw_text=stripped)
-
-
 class HermesClient:
     """Minimal async client for Hermes Agent."""
 
@@ -220,16 +128,6 @@ class HermesClient:
         self._base_url = str(data[CONF_BASE_URL]).rstrip("/")
         self._api_token = data.get(CONF_API_TOKEN)
         self._options = options
-
-    @property
-    def stt_provider(self) -> str:
-        """Return the selected STT provider mode."""
-        return str(self._options.get(CONF_STT_PROVIDER, DEFAULT_STT_PROVIDER))
-
-    @property
-    def tts_provider(self) -> str:
-        """Return the selected TTS provider mode."""
-        return str(self._options.get(CONF_TTS_PROVIDER, DEFAULT_TTS_PROVIDER))
 
     @property
     def model(self) -> str:
@@ -256,41 +154,16 @@ class HermesClient:
         """Return a conversation timeout long enough for agent tool calls."""
         return max(self.timeout, DEFAULT_TIMEOUT)
 
-    @property
-    def tts_audio_format(self) -> str:
-        """Return the fallback TTS extension."""
-        return str(self._options.get(CONF_TTS_AUDIO_FORMAT, DEFAULT_TTS_AUDIO_FORMAT))
-
-    def _url(self, option_key: str, default_path: str, *, voice: bool = False) -> str:
+    def _url(self, option_key: str, default_path: str) -> str:
         """Build a Hermes endpoint URL."""
         path = _clean_path(str(self._options.get(option_key, default_path)))
         return urljoin(f"{self._base_url}/", path.lstrip("/"))
-
-    def _custom_url(self, base_key: str, default_base: str, path_key: str, default_path: str) -> str:
-        """Build a custom provider endpoint URL."""
-        base_url = str(self._options.get(base_key, default_base)).rstrip("/")
-        path = _clean_path(str(self._options.get(path_key, default_path)))
-        return urljoin(f"{base_url}/", path.lstrip("/"))
 
     def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         """Build request headers."""
         headers: dict[str, str] = {}
         if self._api_token:
             headers["Authorization"] = f"Bearer {self._api_token}"
-        if extra:
-            headers.update(extra)
-        return headers
-
-    def _provider_headers(
-        self,
-        token_key: str,
-        extra: dict[str, str] | None = None,
-    ) -> dict[str, str]:
-        """Build headers for custom provider calls."""
-        headers: dict[str, str] = {}
-        token = self._options.get(token_key) or self._api_token
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         if extra:
             headers.update(extra)
         return headers
@@ -334,14 +207,13 @@ class HermesClient:
     ) -> HermesConversationResponse:
         """Send a conversation turn to Hermes."""
         if self.conversation_api == "chat_completions":
-            return await self._async_chat_completions(text, language, conversation_id, chat_history)
+            return await self._async_chat_completions(text, conversation_id, chat_history)
 
-        return await self._async_responses(text, language, conversation_id)
+        return await self._async_responses(text, conversation_id)
 
     async def _async_responses(
         self,
         text: str,
-        language: str,
         conversation_id: str | None,
     ) -> HermesConversationResponse:
         """Send a turn through Hermes' OpenAI-compatible Responses API."""
@@ -376,20 +248,18 @@ class HermesClient:
             raise HermesResponseError("Hermes Responses API response did not include text")
 
         response_id = None
-        continue_conversation = False
         if isinstance(data, dict):
             response_id = data.get("id") or data.get("conversation_id")
 
         return HermesConversationResponse(
             text=response_text,
             conversation_id=str(response_id) if response_id else conversation_id,
-            continue_conversation=continue_conversation,
+            continue_conversation=False,
         )
 
     async def _async_chat_completions(
         self,
         text: str,
-        language: str,
         conversation_id: str | None,
         chat_history: list[dict[str, str]],
     ) -> HermesConversationResponse:
@@ -425,108 +295,10 @@ class HermesClient:
             continue_conversation=False,
         )
 
-    async def async_voice_setup(self, enable_stt: bool, enable_tts: bool) -> HermesVoiceSetupResponse:
-        """Ask Hermes Agent to configure STT/TTS endpoints for Home Assistant."""
-        url = self._url(CONF_CONVERSATION_PATH, DEFAULT_CONVERSATION_PATH)
-        prompt = _voice_setup_prompt(enable_stt, enable_tts)
-        payload = {
-            "model": self.model,
-            "input": prompt,
-            "store": False,
-        }
-        try:
-            async with self._session.post(
-                url,
-                headers=self._headers({"Content-Type": "application/json"}),
-                json=payload,
-                timeout=self.conversation_timeout,
-            ) as response:
-                await self._raise_for_status(response)
-                data = await _read_json_or_text(response)
-        except TimeoutError as err:
-            raise HermesConnectionError("Timed out waiting for Hermes voice setup response") from err
-        except ClientError as err:
-            raise HermesConnectionError("Could not send Hermes voice setup request") from err
-
-        return _extract_json_object(data)
-
-    async def async_stt(self, audio: bytes, language: str, content_type: str = "audio/wav") -> str:
-        """Send audio to Hermes STT and return recognized text."""
-        return await self._async_custom_stt(audio, language, content_type)
-
-    async def _async_custom_stt(self, audio: bytes, language: str, content_type: str) -> str:
-        """Send audio to a custom OpenAI-shaped STT endpoint."""
-        url = self._custom_url(CONF_STT_BASE_URL, DEFAULT_STT_BASE_URL, CONF_STT_PATH, DEFAULT_STT_PATH)
-        form = aiohttp.FormData()
-        form.add_field("model", str(self._options.get(CONF_STT_MODEL, DEFAULT_STT_MODEL)))
-        form.add_field("language", language)
-        form.add_field("file", audio, filename="audio.wav", content_type=content_type)
-
-        try:
-            async with self._session.post(
-                url,
-                headers=self._provider_headers(CONF_STT_API_TOKEN, {"Accept": "application/json"}),
-                data=form,
-                timeout=self.timeout,
-            ) as response:
-                await self._raise_for_status(response)
-                data = await _read_json_or_text(response)
-        except TimeoutError as err:
-            raise HermesConnectionError("Timed out waiting for custom STT response") from err
-        except ClientError as err:
-            raise HermesConnectionError("Could not send custom STT request") from err
-
-        if isinstance(data, dict):
-            field = str(self._options.get(CONF_STT_RESPONSE_TEXT_FIELD, DEFAULT_STT_RESPONSE_TEXT_FIELD))
-            value = _nested_value(data, field)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-
-        text = _extract_text(data)
-        if not text:
-            raise HermesResponseError("Custom STT response did not include recognized text")
-        return text
-
-    async def async_tts(self, message: str, language: str, options: dict[str, Any]) -> HermesTtsResponse:
-        """Send text to Hermes TTS and return audio."""
-        return await self._async_custom_tts(message, language, options)
-
-    async def _async_custom_tts(
-        self,
-        message: str,
-        language: str,
-        options: dict[str, Any],
-    ) -> HermesTtsResponse:
-        """Send text to a custom OpenAI-shaped TTS endpoint."""
-        url = self._custom_url(CONF_TTS_BASE_URL, DEFAULT_TTS_BASE_URL, CONF_TTS_PATH, DEFAULT_TTS_PATH)
-        payload = {
-            "model": str(options.get("model") or self._options.get(CONF_TTS_MODEL, DEFAULT_TTS_MODEL)),
-            "input": message,
-            "voice": str(options.get("voice") or self._options.get(CONF_TTS_VOICE, DEFAULT_TTS_VOICE)),
-            "response_format": self.tts_audio_format,
-        }
-        try:
-            async with self._session.post(
-                url,
-                headers=self._provider_headers(CONF_TTS_API_TOKEN, {"Content-Type": "application/json"}),
-                json=payload,
-                timeout=self.timeout,
-            ) as response:
-                await self._raise_for_status(response)
-                content_type = response.headers.get("Content-Type")
-                data = await response.read()
-        except TimeoutError as err:
-            raise HermesConnectionError("Timed out waiting for custom TTS response") from err
-        except ClientError as err:
-            raise HermesConnectionError("Could not send custom TTS request") from err
-
-        if not data:
-            raise HermesResponseError("Custom TTS response did not include audio")
-
-        return HermesTtsResponse(
-            extension=_audio_extension(content_type, self.tts_audio_format),
-            data=data,
-        )
+    async def async_configure_home_assistant_skill(self) -> str:
+        """Ask Hermes Agent to create/update its Home Assistant knowledge skill."""
+        response = await self._async_responses(_home_assistant_skill_prompt(), None)
+        return response.text
 
 
 async def _read_json_or_text(response: ClientResponse) -> Any:
@@ -546,30 +318,26 @@ async def _read_json_or_text(response: ClientResponse) -> Any:
         return text
 
 
-def _voice_setup_prompt(enable_stt: bool, enable_tts: bool) -> str:
-    """Build the voice setup instruction for Hermes Agent."""
-    requested = []
-    if enable_stt:
-        requested.append("speech-to-text")
-    if enable_tts:
-        requested.append("text-to-speech")
-    requested_text = ", ".join(requested) or "no voice providers"
+def _home_assistant_skill_prompt() -> str:
+    """Build the first-run Hermes skill setup prompt."""
     return (
-        "You are configuring Home Assistant Hermes Assist. "
-        f"Requested voice providers: {requested_text}. "
-        "Inspect your Hermes Agent voice configuration. If local STT or TTS is active, "
-        "set up or expose an HTTP API endpoint that Home Assistant can call. If the active "
-        "provider is already an HTTP API provider such as OpenAI, Groq, Mistral, xAI, "
-        "Gemini, ElevenLabs, or a custom HTTP server, return the direct provider details. "
-        "Return strict JSON only, with no markdown and no commentary. Use this schema: "
-        "{"
-        "\"status\":\"ready|needs_user_action|failed\","
-        "\"stt\":{\"provider\":\"\",\"base_url\":\"\",\"path\":\"\",\"api_token\":\"\","
-        "\"model\":\"\",\"response_text_field\":\"text\",\"health_url\":\"\",\"notes\":\"\"},"
-        "\"tts\":{\"provider\":\"\",\"base_url\":\"\",\"path\":\"\",\"api_token\":\"\","
-        "\"model\":\"\",\"voice\":\"\",\"audio_format\":\"mp3\",\"health_url\":\"\",\"notes\":\"\"},"
-        "\"user_actions\":[\"exact action strings\"]"
-        "}. "
-        "For disabled or unavailable sections, use empty strings. For local services, base_url "
-        "must be reachable from Home Assistant, not just from the Hermes process."
+        "Create or update a Hermes Agent skill named `home-assistant-assist`. "
+        "The skill should teach Hermes how to work well as the conversation agent for "
+        "Home Assistant Assist through the Hermes Assist HACS integration. "
+        "The integration sends user text from Home Assistant Assist to Hermes Agent and "
+        "expects concise natural-language responses. It does not provide STT or TTS. "
+        "Home Assistant handles microphones, speakers, STT, TTS, and Assist pipelines separately. "
+        "The skill should explain what Hermes can do: answer smart-home questions, reason about "
+        "the user's request, call any Home Assistant tools or APIs already available to Hermes, "
+        "summarize device state, ask a clarifying question when a command is ambiguous, and avoid "
+        "claiming an action succeeded unless a tool/API confirms it. "
+        "The skill should explain how Hermes should behave: keep responses short for voice use, "
+        "mention the room/device acted on, use the user's language when possible, preserve context "
+        "across turns, and be honest when Home Assistant access is missing. "
+        "Also include examples: turning lights on/off, setting climate temperature, checking doors, "
+        "explaining automations, creating reminders if Hermes has that tool, and asking which room "
+        "when the target is unclear. "
+        "If you can write skills to disk, create the skill now. If you cannot write files, return "
+        "the complete skill content and exact install instructions. Reply with a short summary of "
+        "what you created or what the user must do next."
     )

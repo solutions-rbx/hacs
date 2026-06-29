@@ -7,47 +7,24 @@
         "data": {
           "base_url": "Hermes base URL",
           "api_token": "API token",
-          "enable_conversation": "Enable conversation agent",
-          "enable_stt": "Enable Hermes speech-to-text",
-          "enable_tts": "Enable Hermes text-to-speech"
+          "create_hermes_skill": "Ask Hermes to create a Home Assistant skill"
         }
       },
-      "voice_setup": {
-        "title": "Voice setup",
-        "description": "Let Hermes Agent configure STT/TTS endpoints automatically, or enter custom HTTP providers yourself. {voice_error}",
-        "data": {
-          "voice_setup_mode": "Voice setup mode"
-        }
-      },
-      "custom_voice": {
-        "title": "Custom voice providers",
-        "description": "Enter OpenAI-shaped or custom HTTP STT/TTS endpoints.",
-        "data": {
-          "stt_base_url": "STT base URL",
-          "stt_path": "STT endpoint path",
-          "stt_api_token": "STT API token",
-          "stt_model": "STT model",
-          "stt_response_text_field": "STT response text field",
-          "tts_base_url": "TTS base URL",
-          "tts_path": "TTS endpoint path",
-          "tts_api_token": "TTS API token",
-          "tts_model": "TTS model",
-          "tts_voice": "TTS voice",
-          "tts_audio_format": "TTS audio format"
-        }
+      "hermes_skill": {
+        "title": "Hermes skill setup",
+        "description": "Hermes skill setup result: {skill_result}",
+        "data": {}
       },
       "confirm": {
         "title": "Confirm Hermes Assist setup",
-        "description": "{summary}",
+        "description": "Hermes skill setup result: {skill_result}",
         "data": {}
       }
     },
     "error": {
       "cannot_connect": "Could not connect to Hermes Agent.",
       "invalid_auth": "Hermes Agent rejected the configured token.",
-      "invalid_voice_setup": "Hermes did not return valid strict JSON for voice setup.",
-      "needs_user_action": "Hermes needs an action before voice setup can finish.",
-      "voice_setup_failed": "Hermes could not set up voice providers.",
+      "skill_setup_failed": "Hermes could not create or update the Home Assistant skill.",
       "unknown": "Unexpected Hermes Agent error."
     },
     "abort": {
@@ -65,24 +42,11 @@
           "conversation_api": "Conversation API",
           "conversation_path": "Responses API endpoint path",
           "chat_completions_path": "Chat completions endpoint path",
-          "voice_setup_mode": "Voice setup mode",
-          "stt_provider": "STT provider mode",
-          "stt_base_url": "Custom STT base URL",
-          "stt_path": "Speech-to-text endpoint path",
-          "stt_api_token": "Custom STT API token",
-          "stt_model": "Custom STT model",
-          "stt_response_text_field": "Custom STT response text field",
-          "tts_provider": "TTS provider mode",
-          "tts_base_url": "Custom TTS base URL",
-          "tts_path": "Text-to-speech endpoint path",
-          "tts_api_token": "Custom TTS API token",
-          "tts_model": "Custom TTS model",
-          "tts_voice": "Custom TTS voice",
           "timeout_seconds": "Request timeout in seconds",
-          "default_language": "Default language",
-          "tts_audio_format": "Fallback TTS audio format"
+          "default_language": "Default language"
         }
       }
     }
   }
 }
+

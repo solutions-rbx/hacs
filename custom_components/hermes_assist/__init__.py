@@ -8,29 +8,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import HermesClient
-from .const import (
-    CONF_ENABLE_CONVERSATION,
-    CONF_ENABLE_STT,
-    CONF_ENABLE_TTS,
-    DOMAIN,
-    STORAGE_CLIENT,
-)
+from .const import DOMAIN, STORAGE_CLIENT
 
 type HermesConfigEntry = ConfigEntry[dict[str, HermesClient]]
 
 
 def _enabled_platforms(entry: ConfigEntry) -> list[Platform]:
     """Return platforms enabled for this entry."""
-    enabled: list[Platform] = []
-
-    if entry.data.get(CONF_ENABLE_CONVERSATION, True):
-        enabled.append(Platform.CONVERSATION)
-    if entry.data.get(CONF_ENABLE_STT, False):
-        enabled.append(Platform.STT)
-    if entry.data.get(CONF_ENABLE_TTS, False):
-        enabled.append(Platform.TTS)
-
-    return enabled
+    return [Platform.CONVERSATION]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

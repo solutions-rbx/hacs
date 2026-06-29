@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_API_TOKEN, CONF_STT_API_TOKEN, CONF_TTS_API_TOKEN
+from .const import CONF_API_TOKEN
 
 
 async def async_get_config_entry_diagnostics(
@@ -16,14 +16,10 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     data = dict(entry.data)
-    for key in (CONF_API_TOKEN, CONF_STT_API_TOKEN, CONF_TTS_API_TOKEN):
-        if key in data:
-            data[key] = "**REDACTED**"
+    if CONF_API_TOKEN in data:
+        data[CONF_API_TOKEN] = "**REDACTED**"
 
     return {
         "entry": data,
-        "options": {
-            key: "**REDACTED**" if key in (CONF_STT_API_TOKEN, CONF_TTS_API_TOKEN) else value
-            for key, value in dict(entry.options).items()
-        },
+        "options": dict(entry.options),
     }
