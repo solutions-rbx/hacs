@@ -35,7 +35,6 @@ from .const import (
     CONF_TTS_PATH,
     CONF_TTS_PROVIDER,
     CONF_TTS_VOICE,
-    CONF_VOICE_BASE_URL,
     DEFAULT_CAPABILITIES_PATH,
     DEFAULT_CHAT_COMPLETIONS_PATH,
     DEFAULT_CONVERSATION_API,
@@ -55,7 +54,6 @@ from .const import (
     DEFAULT_TTS_PATH,
     DEFAULT_TTS_PROVIDER,
     DEFAULT_TTS_VOICE,
-    DEFAULT_VOICE_BASE_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,6 +90,14 @@ class HermesTtsResponse:
 
     extension: str
     data: bytes
+
+
+@dataclass(slots=True)
+class HermesVoiceSetupResponse:
+    """Parsed Hermes voice setup response."""
+
+    payload: dict[str, Any]
+    raw_text: str
 
 
 def _clean_path(path: str) -> str:
@@ -177,6 +183,34 @@ def _nested_value(payload: dict[str, Any], dotted_path: str) -> Any:
     return current
 
 
+def _extract_json_object(payload: Any) -> HermesVoiceSetupResponse:
+    """Extract a strict JSON object from a Hermes response."""
+    if isinstance(payload, dict) and isinstance(payload.get("status"), str):
+        return HermesVoiceSetupResponse(payload=payload, raw_text=json.dumps(payload))
+
+    text = _extract_text(payload)
+    if not text:
+        raise HermesResponseError("Hermes setup response did not include JSON text")
+
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        stripped = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as err:
+        raise HermesResponseError(f"Hermes setup response was not valid JSON: {stripped[:300]}") from err
+
+    if not isinstance(parsed, dict):
+        raise HermesResponseError("Hermes setup response JSON was not an object")
+    return HermesVoiceSetupResponse(payload=parsed, raw_text=stripped)
+
+
 class HermesClient:
     """Minimal async client for Hermes Agent."""
 
@@ -186,7 +220,6 @@ class HermesClient:
         self._base_url = str(data[CONF_BASE_URL]).rstrip("/")
         self._api_token = data.get(CONF_API_TOKEN)
         self._options = options
-        self._voice_base_url = str(self._options.get(CONF_VOICE_BASE_URL, DEFAULT_VOICE_BASE_URL)).rstrip("/")
 
     @property
     def stt_provider(self) -> str:
@@ -231,8 +264,7 @@ class HermesClient:
     def _url(self, option_key: str, default_path: str, *, voice: bool = False) -> str:
         """Build a Hermes endpoint URL."""
         path = _clean_path(str(self._options.get(option_key, default_path)))
-        base_url = self._voice_base_url if voice else self._base_url
-        return urljoin(f"{base_url}/", path.lstrip("/"))
+        return urljoin(f"{self._base_url}/", path.lstrip("/"))
 
     def _custom_url(self, base_key: str, default_base: str, path_key: str, default_path: str) -> str:
         """Build a custom provider endpoint URL."""
@@ -292,17 +324,6 @@ class HermesClient:
             raise HermesConnectionError("Timed out connecting to Hermes API server") from err
         except ClientError as err:
             raise HermesConnectionError("Could not connect to Hermes API server") from err
-
-    async def async_voice_health_check(self) -> None:
-        """Check that the Hermes Assist plugin sidecar is available."""
-        url = urljoin(f"{self._voice_base_url}/", "health")
-        try:
-            async with self._session.get(url, headers=self._headers(), timeout=self.timeout) as response:
-                await self._raise_for_status(response)
-        except TimeoutError as err:
-            raise HermesConnectionError("Timed out connecting to Hermes Assist plugin voice API") from err
-        except ClientError as err:
-            raise HermesConnectionError("Could not connect to Hermes Assist plugin voice API") from err
 
     async def async_converse(
         self,
@@ -404,37 +425,34 @@ class HermesClient:
             continue_conversation=False,
         )
 
-    async def async_stt(self, audio: bytes, language: str, content_type: str = "audio/wav") -> str:
-        """Send audio to Hermes STT and return recognized text."""
-        if self.stt_provider == "custom_http":
-            return await self._async_custom_stt(audio, language, content_type)
-
-        url = self._url(CONF_STT_PATH, DEFAULT_STT_PATH, voice=True)
-        headers = self._headers(
-            {
-                "Content-Type": content_type,
-                "Accept": "application/json, text/plain",
-                "X-Hermes-Language": language,
-            }
-        )
+    async def async_voice_setup(self, enable_stt: bool, enable_tts: bool) -> HermesVoiceSetupResponse:
+        """Ask Hermes Agent to configure STT/TTS endpoints for Home Assistant."""
+        url = self._url(CONF_CONVERSATION_PATH, DEFAULT_CONVERSATION_PATH)
+        prompt = _voice_setup_prompt(enable_stt, enable_tts)
+        payload = {
+            "model": self.model,
+            "input": prompt,
+            "store": False,
+        }
         try:
             async with self._session.post(
                 url,
-                headers=headers,
-                data=audio,
-                timeout=self.timeout,
+                headers=self._headers({"Content-Type": "application/json"}),
+                json=payload,
+                timeout=self.conversation_timeout,
             ) as response:
                 await self._raise_for_status(response)
                 data = await _read_json_or_text(response)
         except TimeoutError as err:
-            raise HermesConnectionError("Timed out waiting for Hermes STT response") from err
+            raise HermesConnectionError("Timed out waiting for Hermes voice setup response") from err
         except ClientError as err:
-            raise HermesConnectionError("Could not send STT request to Hermes") from err
+            raise HermesConnectionError("Could not send Hermes voice setup request") from err
 
-        text = _extract_text(data)
-        if not text:
-            raise HermesResponseError("Hermes STT response did not include recognized text")
-        return text
+        return _extract_json_object(data)
+
+    async def async_stt(self, audio: bytes, language: str, content_type: str = "audio/wav") -> str:
+        """Send audio to Hermes STT and return recognized text."""
+        return await self._async_custom_stt(audio, language, content_type)
 
     async def _async_custom_stt(self, audio: bytes, language: str, content_type: str) -> str:
         """Send audio to a custom OpenAI-shaped STT endpoint."""
@@ -471,33 +489,7 @@ class HermesClient:
 
     async def async_tts(self, message: str, language: str, options: dict[str, Any]) -> HermesTtsResponse:
         """Send text to Hermes TTS and return audio."""
-        if self.tts_provider == "custom_http":
-            return await self._async_custom_tts(message, language, options)
-
-        url = self._url(CONF_TTS_PATH, DEFAULT_TTS_PATH, voice=True)
-        payload = {"text": message, "language": language, "options": options}
-        try:
-            async with self._session.post(
-                url,
-                headers=self._headers({"Content-Type": "application/json"}),
-                json=payload,
-                timeout=self.timeout,
-            ) as response:
-                await self._raise_for_status(response)
-                content_type = response.headers.get("Content-Type")
-                data = await response.read()
-        except TimeoutError as err:
-            raise HermesConnectionError("Timed out waiting for Hermes TTS response") from err
-        except ClientError as err:
-            raise HermesConnectionError("Could not send TTS request to Hermes") from err
-
-        if not data:
-            raise HermesResponseError("Hermes TTS response did not include audio")
-
-        return HermesTtsResponse(
-            extension=_audio_extension(content_type, self.tts_audio_format),
-            data=data,
-        )
+        return await self._async_custom_tts(message, language, options)
 
     async def _async_custom_tts(
         self,
@@ -552,3 +544,32 @@ async def _read_json_or_text(response: ClientResponse) -> Any:
     except json.JSONDecodeError:
         _LOGGER.debug("Hermes returned non-JSON text response")
         return text
+
+
+def _voice_setup_prompt(enable_stt: bool, enable_tts: bool) -> str:
+    """Build the voice setup instruction for Hermes Agent."""
+    requested = []
+    if enable_stt:
+        requested.append("speech-to-text")
+    if enable_tts:
+        requested.append("text-to-speech")
+    requested_text = ", ".join(requested) or "no voice providers"
+    return (
+        "You are configuring Home Assistant Hermes Assist. "
+        f"Requested voice providers: {requested_text}. "
+        "Inspect your Hermes Agent voice configuration. If local STT or TTS is active, "
+        "set up or expose an HTTP API endpoint that Home Assistant can call. If the active "
+        "provider is already an HTTP API provider such as OpenAI, Groq, Mistral, xAI, "
+        "Gemini, ElevenLabs, or a custom HTTP server, return the direct provider details. "
+        "Return strict JSON only, with no markdown and no commentary. Use this schema: "
+        "{"
+        "\"status\":\"ready|needs_user_action|failed\","
+        "\"stt\":{\"provider\":\"\",\"base_url\":\"\",\"path\":\"\",\"api_token\":\"\","
+        "\"model\":\"\",\"response_text_field\":\"text\",\"health_url\":\"\",\"notes\":\"\"},"
+        "\"tts\":{\"provider\":\"\",\"base_url\":\"\",\"path\":\"\",\"api_token\":\"\","
+        "\"model\":\"\",\"voice\":\"\",\"audio_format\":\"mp3\",\"health_url\":\"\",\"notes\":\"\"},"
+        "\"user_actions\":[\"exact action strings\"]"
+        "}. "
+        "For disabled or unavailable sections, use empty strings. For local services, base_url "
+        "must be reachable from Home Assistant, not just from the Hermes process."
+    )

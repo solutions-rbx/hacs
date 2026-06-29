@@ -1,7 +1,0 @@
-name: home_assistant_assist
-version: 0.1.0
-description: Home Assistant Assist bridge endpoints for Hermes Agent STT and TTS.
-provides_tools:
-  - home_assistant_assist_config
-provides_hooks:
-  - on_session_start

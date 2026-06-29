@@ -1,6 +1,6 @@
 """Tests for Hermes API helper parsing."""
 
-from custom_components.hermes_assist.api import _audio_extension, _extract_text
+from custom_components.hermes_assist.api import _audio_extension, _extract_json_object, _extract_text
 
 
 def test_extract_text_from_simple_response() -> None:
@@ -35,3 +35,21 @@ def test_audio_extension() -> None:
     assert _audio_extension("audio/wav", "mp3") == "wav"
     assert _audio_extension("audio/mpeg", "wav") == "mp3"
     assert _audio_extension(None, "ogg") == "ogg"
+
+
+def test_extract_setup_json_from_responses_shape() -> None:
+    """Extract setup JSON from a Responses API text payload."""
+    payload = {
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": '{"status":"ready","stt":{},"tts":{},"user_actions":[]}',
+                    }
+                ],
+            }
+        ]
+    }
+    assert _extract_json_object(payload).payload["status"] == "ready"
